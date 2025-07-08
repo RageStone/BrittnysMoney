@@ -59,7 +59,7 @@ export async function GET(request: NextRequest) {
 
     if (action === "fetch") {
       const sheetName = await getFirstSheetName(sheetsClient)
-      const range = `${sheetName}!A:X`
+      const range = `${sheetName}!A:AI`
       const response = await sheetsClient.spreadsheets.values.get({
         spreadsheetId: SHEET_ID,
         range,
@@ -112,9 +112,19 @@ export async function POST(request: NextRequest) {
         signal.indicators.sma,
         signal.indicators.ema,
         signal.indicators.momentum,
+        signal.indicators.macd,
+        signal.indicators.macdSignal,
+        signal.indicators.macdHist,
+        signal.indicators.bbUpper,
+        signal.indicators.bbLower,
+        signal.indicators.bbMiddle,
+        signal.indicators.adx,
+        signal.indicators.obv,
+        signal.indicators.mfi,
+        signal.indicators.stochrsi,
       ]]
       const sheetName = await getFirstSheetName(sheetsClient)
-      const range = `${sheetName}!A:X`
+      const range = `${sheetName}!A:AI`
       await sheetsClient.spreadsheets.values.append({
         spreadsheetId: SHEET_ID,
         range,
@@ -143,7 +153,7 @@ export async function POST(request: NextRequest) {
       if (rowNumber === -1) {
         return NextResponse.json({ error: "Signal not found" }, { status: 404 })
       }
-      const updateRange = `${sheetName}!A${rowNumber}:X${rowNumber}`
+      const updateRange = `${sheetName}!A${rowNumber}:AI${rowNumber}`
       const values = [[
         signal.id,
         signal.pair,
@@ -169,6 +179,16 @@ export async function POST(request: NextRequest) {
         signal.indicators.sma,
         signal.indicators.ema,
         signal.indicators.momentum,
+        signal.indicators.macd,
+        signal.indicators.macdSignal,
+        signal.indicators.macdHist,
+        signal.indicators.bbUpper,
+        signal.indicators.bbLower,
+        signal.indicators.bbMiddle,
+        signal.indicators.adx,
+        signal.indicators.obv,
+        signal.indicators.mfi,
+        signal.indicators.stochrsi,
       ]]
       await sheetsClient.spreadsheets.values.update({
         spreadsheetId: SHEET_ID,

@@ -21,7 +21,7 @@ import {
 } from "lucide-react"
 import { Alert, AlertDescription } from "@/components/ui/alert"
 import { toast } from "sonner"
-import { parseSignal, filterValidSignals, Signal, TechnicalIndicators } from "@/lib/utils"
+import { parseSignal, filterValidSignals, Signal } from "@/lib/utils"
 import { SignalsTable } from "@/components/SignalsTable"
 import { useSignals } from "@/hooks/useSignals"
 import { usePerformanceStats } from "@/hooks/usePerformanceStats"
@@ -127,6 +127,28 @@ interface PerformanceStats {
   confidenceAccuracy: number
   bestPair: string
   bestTimeframe: string
+}
+
+export interface TechnicalIndicators {
+  rsi: number
+  stoch: number
+  williams: number
+  cci: number
+  atr: number
+  sma: number
+  ema: number
+  momentum: number
+  // Added indicators
+  macd: number
+  macdSignal: number
+  macdHist: number
+  bbUpper: number
+  bbLower: number
+  bbMiddle: number
+  adx: number
+  obv: number
+  mfi: number
+  stochrsi: number
 }
 
 function LocalTime() {
@@ -521,7 +543,7 @@ export default function SignalsPage() {
       return j ?? {}
     }
     try {
-      const [rsi, stoch, williams, cci, atr, sma, ema, momentum] = await Promise.all([
+      const [rsi, stoch, williams, cci, atr, sma, ema, momentum, macd, bbands, adx, obv, mfi, stochrsi] = await Promise.all([
         get("rsi"),
         get("stoch"),
         get("willr"),
@@ -530,6 +552,12 @@ export default function SignalsPage() {
         get("sma"),
         get("ema"),
         get("mom"),
+        get("macd"), // MACD
+        get("bbands"), // Bollinger Bands
+        get("adx"), // ADX
+        get("obv"), // OBV
+        get("mfi"), // MFI
+        get("stochrsi"), // Stochastic RSI
       ])
       return {
         rsi: Number.parseFloat(rsi?.values?.[0]?.rsi) || 50,
@@ -546,6 +574,18 @@ export default function SignalsPage() {
           Array.isArray(momentum?.values) && momentum.values.length > 0
             ? Number.parseFloat(momentum.values[0].mom)
             : 0,
+        // New indicators
+        macd: Number.parseFloat(macd?.values?.[0]?.macd) || 0,
+        macdSignal: Number.parseFloat(macd?.values?.[0]?.signal) || 0,
+        macdHist: Number.parseFloat(macd?.values?.[0]?.histogram) || 0,
+        bbUpper: Number.parseFloat(bbands?.values?.[0]?.upper) || 0,
+        bbLower: Number.parseFloat(bbands?.values?.[0]?.lower) || 0,
+        bbMiddle: Number.parseFloat(bbands?.values?.[0]?.middle) || 0,
+        adx: Number.parseFloat(adx?.values?.[0]?.adx) || 20,
+        // New indicators
+        obv: Number.parseFloat(obv?.values?.[0]?.obv) || 0,
+        mfi: Number.parseFloat(mfi?.values?.[0]?.mfi) || 50,
+        stochrsi: Number.parseFloat(stochrsi?.values?.[0]?.stochrsi) || 0.5,
       }
     } catch (error) {
       console.error("Error fetching technical indicators:", error)
@@ -558,6 +598,16 @@ export default function SignalsPage() {
         sma: 1,
         ema: 1,
         momentum: 0,
+        macd: 0,
+        macdSignal: 0,
+        macdHist: 0,
+        bbUpper: 0,
+        bbLower: 0,
+        bbMiddle: 0,
+        adx: 20,
+        obv: 0,
+        mfi: 50,
+        stochrsi: 0.5,
       }
     }
   }
@@ -648,8 +698,13 @@ export default function SignalsPage() {
       sellScore += weights.priceChange
       reasoning += "שינוי מחיר שלילי. "
     }
+    // 9. Volume penalty (new)
+    if (marketData.volume && marketData.volume < 100000) { // Adjust threshold as appropriate
+      confidence -= 7
+      reasoning += "נפח מסחר נמוך - ביטחון יורד. "
+    }
 
-    // Agreement/conflict logic
+    // Agreement/conflict logic (unchanged)
     if (buyScore > 0 && sellScore === 0) {
       confidence += 10
       reasoning += "כל האינדיקטורים תומכים בכיוון אחד. "
@@ -661,66 +716,143 @@ export default function SignalsPage() {
       reasoning += "יש סתירה בין האינדיקטורים. "
     }
 
-    // Volatility penalty
+    // Volatility penalty (unchanged)
     if (indicators.atr > 0.002) {
       confidence -= 5
       reasoning += "תנודתיות גבוהה - ביטחון יורד. "
     }
 
-    // Historical win rate boost (pair)
+    // Historical win rate boost (pair) - increased weight
     const completedSignals = signals.filter((s: Signal) => s.status === "WIN" || s.status === "LOSS")
     const pairSignals = completedSignals.filter((s: Signal) => s.pair === pair)
     let pairWinRate = 0
     if (pairSignals.length >= 3) {
       pairWinRate = (pairSignals.filter((s: Signal) => s.status === "WIN").length / pairSignals.length) * 100
       if (pairWinRate > 60) {
-        confidence += 5
+        confidence += 10 // was 5
         reasoning += `היסטוריית הצלחה גבוהה לזוג זה (${pairWinRate.toFixed(1)}%). `
       } else if (pairWinRate < 40) {
-        confidence -= 5
+        confidence -= 10 // was 5
         reasoning += `היסטוריית הצלחה נמוכה לזוג זה (${pairWinRate.toFixed(1)}%). `
       }
     }
 
-    // Historical win rate boost (timeframe)
+    // Historical win rate boost (timeframe) - increased weight
     const tfSignals = completedSignals.filter((s: Signal) => s.timeframe === timeframe)
     let tfWinRate = 0
     if (tfSignals.length >= 3) {
       tfWinRate = (tfSignals.filter((s: Signal) => s.status === "WIN").length / tfSignals.length) * 100
       if (tfWinRate > 60) {
-        confidence += 3
+        confidence += 6 // was 3
         reasoning += `היסטוריית הצלחה גבוהה למסגרת זמן זו (${tfWinRate.toFixed(1)}%). `
       } else if (tfWinRate < 40) {
-        confidence -= 3
+        confidence -= 6 // was 3
         reasoning += `היסטוריית הצלחה נמוכה למסגרת זמן זו (${tfWinRate.toFixed(1)}%). `
       }
     }
 
-    // Historical win rate for similar indicator setup (direction + high confidence)
+    // Historical win rate for similar indicator setup (direction + high confidence) - increased weight
     const direction: "BUY" | "SELL" = buyScore > sellScore ? "BUY" : "SELL"
     const similarSignals = completedSignals.filter((s: Signal) => s.direction === direction && Math.abs(s.confidence - confidence) < 10)
     let similarWinRate = 0
     if (similarSignals.length >= 3) {
       similarWinRate = (similarSignals.filter((s: Signal) => s.status === "WIN").length / similarSignals.length) * 100
       if (similarWinRate > 60) {
-        confidence += 5
+        confidence += 10 // was 5
         reasoning += `אותות דומים בעבר הצליחו (${similarWinRate.toFixed(1)}%). `
       } else if (similarWinRate < 40) {
-        confidence -= 5
+        confidence -= 10 // was 5
         reasoning += `אותות דומים בעבר נכשלו (${similarWinRate.toFixed(1)}%). `
       }
     }
 
-    // Strong indicator value boost
+    // Strong indicator value boost (unchanged)
     if (indicators.rsi < 20 || indicators.rsi > 80) {
       confidence += 5
       reasoning += "ערך קיצוני ב-RSI. "
+    }
+
+    // MACD logic
+    if (typeof indicators.macd === "number" && typeof indicators.macdSignal === "number") {
+      if (indicators.macd > indicators.macdSignal) {
+        buyScore += 8
+        reasoning += "MACD שורי (MACD מעל סיגנל). "
+      } else if (indicators.macd < indicators.macdSignal) {
+        sellScore += 8
+        reasoning += "MACD דובי (MACD מתחת סיגנל). "
+      }
+      // MACD histogram strong move
+      if (Math.abs(indicators.macdHist) > 0.5) {
+        confidence += 3
+        reasoning += "תנודתיות חזקה ב-MACD. "
+      }
+    }
+    // Bollinger Bands logic
+    if (typeof indicators.bbUpper === "number" && typeof indicators.bbLower === "number" && typeof marketData.price === "number") {
+      if (marketData.price > indicators.bbUpper) {
+        sellScore += 6
+        reasoning += "מחיר מעל בולינגר עליון - קנייה יתר. "
+      } else if (marketData.price < indicators.bbLower) {
+        buyScore += 6
+        reasoning += "מחיר מתחת בולינגר תחתון - מכירה יתר. "
+      }
+    }
+    // ADX logic
+    if (typeof indicators.adx === "number") {
+      if (indicators.adx > 25) {
+        confidence += 5
+        reasoning += "מגמה חזקה לפי ADX. "
+      } else if (indicators.adx < 15) {
+        confidence -= 5
+        reasoning += "מגמה חלשה לפי ADX. "
+      }
+    }
+
+    // OBV logic
+    if (typeof indicators.obv === "number" && indicators.obv !== 0) {
+      if (indicators.obv > 0) {
+        buyScore += 4
+        reasoning += "OBV חיובי - נפח תומך בעליות. "
+      } else if (indicators.obv < 0) {
+        sellScore += 4
+        reasoning += "OBV שלילי - נפח תומך בירידות. "
+      }
+    }
+    // MFI logic
+    if (typeof indicators.mfi === "number" && indicators.mfi !== 50) {
+      if (indicators.mfi > 80) {
+        sellScore += 4
+        reasoning += "MFI גבוה - קנייה יתר. "
+      } else if (indicators.mfi < 20) {
+        buyScore += 4
+        reasoning += "MFI נמוך - מכירה יתר. "
+      }
+    }
+    // Stochastic RSI logic
+    if (typeof indicators.stochrsi === "number" && indicators.stochrsi !== 0.5) {
+      if (indicators.stochrsi > 0.8) {
+        sellScore += 4
+        reasoning += "StochRSI גבוה - קנייה יתר. "
+      } else if (indicators.stochrsi < 0.2) {
+        buyScore += 4
+        reasoning += "StochRSI נמוך - מכירה יתר. "
+      }
     }
 
     // Clamp confidence
     confidence = Math.max(0, Math.min(100, confidence))
 
     const signalStrength = Math.abs(buyScore - sellScore)
+
+    // Minimum signal strength threshold (new)
+    if (signalStrength < 3) {
+      return {
+        direction,
+        confidence: 0,
+        reasoning: reasoning + "הפרש בין קנייה למכירה נמוך מדי - אות לא חזק.",
+        signalStrength,
+      }
+    }
 
     return {
       direction,
@@ -788,6 +920,10 @@ export default function SignalsPage() {
         indicators,
         reasoning,
         status: "ACTIVE",
+      }
+      if (confidence < 30) {
+        setError("האות חלש מדי (מתחת ל-30% ביטחון). המתן דקה ונסה שוב.");
+        return;
       }
       await saveSignalToSheets(newSignal)
       setSignals((prev: Signal[]) => [newSignal, ...prev])

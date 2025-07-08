@@ -15,6 +15,17 @@ export interface TechnicalIndicators {
   sma: number
   ema: number
   momentum: number
+  // New indicators
+  macd: number
+  macdSignal: number
+  macdHist: number
+  bbUpper: number
+  bbLower: number
+  bbMiddle: number
+  adx: number
+  obv: number
+  mfi: number
+  stochrsi: number
 }
 
 export interface Signal {
@@ -80,6 +91,17 @@ export function parseSignal(raw: any): Signal | null {
         sma: Number.parseFloat(raw.indicators?.sma ?? raw[21]) || 1,
         ema: Number.parseFloat(raw.indicators?.ema ?? raw[22]) || 1,
         momentum: Number.parseFloat(raw.indicators?.momentum ?? raw[23]) || 0,
+        // New indicators
+        macd: Number.parseFloat(raw.indicators?.macd ?? raw[24]) || 0,
+        macdSignal: Number.parseFloat(raw.indicators?.macdSignal ?? raw[25]) || 0,
+        macdHist: Number.parseFloat(raw.indicators?.macdHist ?? raw[26]) || 0,
+        bbUpper: Number.parseFloat(raw.indicators?.bbUpper ?? raw[27]) || 0,
+        bbLower: Number.parseFloat(raw.indicators?.bbLower ?? raw[28]) || 0,
+        bbMiddle: Number.parseFloat(raw.indicators?.bbMiddle ?? raw[29]) || 0,
+        adx: Number.parseFloat(raw.indicators?.adx ?? raw[30]) || 20,
+        obv: Number.parseFloat(raw.indicators?.obv ?? raw[31]) || 0,
+        mfi: Number.parseFloat(raw.indicators?.mfi ?? raw[32]) || 50,
+        stochrsi: Number.parseFloat(raw.indicators?.stochrsi ?? raw[33]) || 0.5,
       },
     }
   } catch (err) {
@@ -124,6 +146,17 @@ export const TechnicalIndicatorsSchema = z.object({
   sma: z.number(),
   ema: z.number(),
   momentum: z.number(),
+  // New indicators
+  macd: z.number(),
+  macdSignal: z.number(),
+  macdHist: z.number(),
+  bbUpper: z.number(),
+  bbLower: z.number(),
+  bbMiddle: z.number(),
+  adx: z.number(),
+  obv: z.number(),
+  mfi: z.number(),
+  stochrsi: z.number(),
 })
 
 export const SignalSchema = z.object({

@@ -320,6 +320,47 @@ export function SignalsTable({ signals, getStatusBadge, onDeleteSignal, onEditSi
                   <span className="text-gray-400">ATR:</span>
                   <span className="mr-2 text-white">{signal.indicators.atr.toFixed(5)}</span>
                 </div>
+                {/* New indicators */}
+                <div>
+                  <span className="text-gray-400">MACD:</span>
+                  <span className="mr-2 text-white">{signal.indicators.macd?.toFixed(4)}</span>
+                </div>
+                <div>
+                  <span className="text-gray-400">MACD Signal:</span>
+                  <span className="mr-2 text-white">{signal.indicators.macdSignal?.toFixed(4)}</span>
+                </div>
+                <div>
+                  <span className="text-gray-400">MACD Hist:</span>
+                  <span className="mr-2 text-white">{signal.indicators.macdHist?.toFixed(4)}</span>
+                </div>
+                <div>
+                  <span className="text-gray-400">BB Upper:</span>
+                  <span className="mr-2 text-white">{signal.indicators.bbUpper?.toFixed(5)}</span>
+                </div>
+                <div>
+                  <span className="text-gray-400">BB Middle:</span>
+                  <span className="mr-2 text-white">{signal.indicators.bbMiddle?.toFixed(5)}</span>
+                </div>
+                <div>
+                  <span className="text-gray-400">BB Lower:</span>
+                  <span className="mr-2 text-white">{signal.indicators.bbLower?.toFixed(5)}</span>
+                </div>
+                <div>
+                  <span className="text-gray-400">ADX:</span>
+                  <span className="mr-2 text-white">{signal.indicators.adx?.toFixed(2)}</span>
+                </div>
+                <div>
+                  <span className="text-gray-400">OBV:</span>
+                  <span className="mr-2 text-white">{signal.indicators.obv?.toFixed(2)}</span>
+                </div>
+                <div>
+                  <span className="text-gray-400">MFI:</span>
+                  <span className="mr-2 text-white">{signal.indicators.mfi?.toFixed(1)}</span>
+                </div>
+                <div>
+                  <span className="text-gray-400">StochRSI:</span>
+                  <span className="mr-2 text-white">{signal.indicators.stochrsi?.toFixed(2)}</span>
+                </div>
               </div>
               {/* Reasoning/Explanation Section */}
               <div dir="rtl" className="my-2 px-3 py-2 rounded bg-green-900/20 border border-green-500 text-green-300 text-sm font-medium text-right">
