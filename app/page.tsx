@@ -22,18 +22,24 @@ import {
 import { Alert, AlertDescription } from "@/components/ui/alert"
 import { toast } from "sonner"
 import { parseSignal, filterValidSignals, Signal } from "@/lib/utils"
+import { calcProfitPct } from "@/lib/metrics"
 import { SignalsTable } from "@/components/SignalsTable"
 import { useSignals } from "@/hooks/useSignals"
 import { usePerformanceStats } from "@/hooks/usePerformanceStats"
 import { useBacktest } from "@/hooks/useBacktest"
 import { SignalSchema, BacktestResultSchema, BacktestSummarySchema } from "@/lib/utils"
 import { z } from "zod"
+import { fetchMLConfidence, SignalFeatures, MLExplanation } from "@/lib/utils"
 
 // API Key rotation system
 const API_KEYS = [
-  "d8edf0bacb6048ea8b12e71ffc0a6bc7", // Original key
-  "d6b8b9dd760c4c288f0ef04b90285492", // Second key
-  "c4f369c946214a97b04fbc1ff0405bcb", // Third key for checking
+  process.env.TWELVEDATA_KEY1!,
+  process.env.TWELVEDATA_KEY2!,
+  process.env.TWELVEDATA_KEY3!,
+  process.env.TWELVEDATA_KEY4!,
+  //"d8edf0bacb6048ea8b12e71ffc0a6bc7", // Original key
+  //"d6b8b9dd760c4c288f0ef04b90285492", // Second key
+  //"c4f369c946214a97b04fbc1ff0405bcb", // Third key for checking
 ]
 
 const currentKeyIndex = 0
@@ -151,6 +157,9 @@ export interface TechnicalIndicators {
   stochrsi: number
 }
 
+// Update the cache type to only require winRate
+const backtestStatsCache = new Map<string, { winRate: number }>();
+
 function LocalTime() {
   const [time, setTime] = useState("");
   useEffect(() => {
@@ -163,6 +172,41 @@ function LocalTime() {
   }, []);
   return <div className="text-gray-400">שעה מקומית: {time}</div>;
 }
+
+// Helper: encode pair, timeframe, direction as integers for ML model
+const pairMap = [
+  "EUR/USD",
+  "GBP/USD",
+  "USD/JPY",
+  "USD/CHF",
+  "AUD/USD",
+  "USD/CAD",
+  "NZD/USD",
+  "EUR/JPY",
+  "GBP/JPY",
+  "CHF/JPY",
+  "EUR/GBP",
+  "AUD/CAD",
+  "GBP/CHF",
+  "EUR/AUD",
+  "AUD/NZD",
+]
+const timeframeMap = [
+  "1min",
+  "5min",
+  "15min",
+  "30min",
+  "1h",
+  "4h",
+  "1day",
+]
+const directionMap = ["BUY", "SELL"]
+function encodePair(pair: string) { return pairMap.indexOf(pair) }
+function encodeTimeframe(tf: string) { return timeframeMap.indexOf(tf) }
+function encodeDirection(dir: string) { return directionMap.indexOf(dir) }
+
+// Add explanation to Signal type (for local use)
+type SignalWithExplanation = Signal & { explanation?: MLExplanation[] }
 
 export default function SignalsPage() {
   // Use custom hooks for signals, performance, and backtesting
@@ -180,21 +224,23 @@ export default function SignalsPage() {
   } = useSignals()
   const performanceStats = usePerformanceStats(signals)
   const {
-    backtestResults,
     backtestSummary,
     isBacktesting,
     error: backtestError,
     runBacktest,
-    setBacktestResults,
     setBacktestSummary,
     setError: setBacktestError,
-  } = useBacktest()
+  } = useBacktest();
 
   const [selectedTimeframe, setSelectedTimeframe] = useState<string>("")
   const [selectedPair, setSelectedPair] = useState<string>("")
   const [isGenerating, setIsGenerating] = useState(false)
   const [isCheckingTrades, setIsCheckingTrades] = useState(false)
   const [marketData, setMarketData] = useState<MarketData | null>(null)
+  const [showFiltered, setShowFiltered] = useState(true);
+
+  const MIN_PROFIT_PCT = typeof process.env.NEXT_PUBLIC_MIN_PROFIT_PCT !== "undefined" ? Number(process.env.NEXT_PUBLIC_MIN_PROFIT_PCT) : 0;
+  const MIN_CONFIDENCE = typeof process.env.NEXT_PUBLIC_MIN_CONFIDENCE !== "undefined" ? Number(process.env.NEXT_PUBLIC_MIN_CONFIDENCE) : 0;
 
   const timeframes = [
     { value: "1min", label: "דקה אחת" },
@@ -249,6 +295,15 @@ export default function SignalsPage() {
   useEffect(() => {
     calculatePerformanceStats()
   }, [signals])
+
+  useEffect(() => {
+    // Whenever a backtest is run and summary is available, cache the stats
+    if (backtestSummary && selectedPair && selectedTimeframe) {
+      backtestStatsCache.set(`${selectedPair}:${selectedTimeframe}`, {
+        winRate: backtestSummary.winRate,
+      });
+    }
+  }, [backtestSummary, selectedPair, selectedTimeframe]);
 
   const calculatePerformanceStats = () => {
     const completed = signals.filter((s: Signal) => s.status === "WIN" || s.status === "LOSS")
@@ -839,6 +894,19 @@ export default function SignalsPage() {
       }
     }
 
+    // --- Backtest-based confidence adjustment ---
+    const cacheKey = `${pair}:${timeframe}`;
+    const backtestStats = backtestStatsCache.get(cacheKey);
+    if (backtestStats) {
+      if (backtestStats.winRate > 60) {
+        confidence += 10;
+        reasoning += ` (Backtest win rate high: ${backtestStats.winRate.toFixed(1)}%)`;
+      } else if (backtestStats.winRate < 40) {
+        confidence -= 10;
+        reasoning += ` (Backtest win rate low: ${backtestStats.winRate.toFixed(1)}%)`;
+      }
+    }
+
     // Clamp confidence
     confidence = Math.max(0, Math.min(100, confidence))
 
@@ -876,7 +944,6 @@ export default function SignalsPage() {
       }
       // For entry price, use the real-time price from /price endpoint
       const entryPrice = Number.parseFloat(priceData.price)
-      console.log(`[SIGNAL GENERATION] Real-time price for ${selectedPair}: ${entryPrice} at ${new Date().toISOString()}`)
       // Fetch quote for SL/TP and other data with timestamp for fresh data
       const quoteRes = await fetch(`/api/marketdata?symbol=${selectedPair}&type=quote&timestamp=${timestamp}`)
       const quoteData = await quoteRes.json()
@@ -885,22 +952,50 @@ export default function SignalsPage() {
       }
       // Fetch indicators
       const indicators = await fetchTechnicalIndicators(selectedPair, selectedTimeframe)
-      const { direction, confidence, reasoning } = generateAdvancedTradingSignal(
+      const { direction, confidence: legacyConfidence, reasoning } = generateAdvancedTradingSignal(
         { ...quoteData, price: entryPrice },
         indicators,
         selectedPair,
         selectedTimeframe,
       )
-      
+
+      // ML confidence integration
+      let mlConfidence: number | null = null
+      let mlExplanation: MLExplanation[] | undefined = undefined
+      let mlUsed = false
+      let mlRaw: any = null
+      try {
+        const features: SignalFeatures = {
+          ...indicators,
+          pair: encodePair(selectedPair),
+          timeframe: encodeTimeframe(selectedTimeframe),
+          direction: encodeDirection(direction),
+        }
+        const mlResult = await fetchMLConfidence(features)
+        mlRaw = mlResult
+        mlConfidence = mlResult.confidence
+        mlExplanation = mlResult.explanation
+        mlUsed = true
+        console.log("ML API response:", mlResult)
+      } catch (err) {
+        console.warn("ML confidence API failed, using legacy confidence", err)
+        mlUsed = false
+      }
+      const finalConfidence = mlConfidence !== null ? Math.round(mlConfidence * 100) : legacyConfidence
+      if (mlUsed) {
+        console.log("Using ML confidence:", finalConfidence)
+      } else {
+        console.log("Using legacy confidence:", finalConfidence)
+      }
+
       // For forex, we need to account for spread. Use bid/ask from quote data
       const adjustedEntryPrice = direction === "BUY" 
         ? Number.parseFloat(quoteData.ask ?? entryPrice)
         : Number.parseFloat(quoteData.bid ?? entryPrice)
-      console.log(`[SIGNAL GENERATION] Adjusted entry price for ${selectedPair} (${direction}): ${adjustedEntryPrice} (real-time: ${entryPrice}, ask: ${quoteData.ask}, bid: ${quoteData.bid}) at ${new Date().toISOString()}`)
-      
+
       const stopLossDistance = indicators.atr * 1.5
       const takeProfitDistance = indicators.atr * 2.5
-      const newSignal: Signal = {
+      const newSignal: SignalWithExplanation & { mlUsed?: boolean; mlRaw?: any } = {
         id: Date.now().toString(),
         pair: selectedPair,
         direction,
@@ -914,14 +1009,19 @@ export default function SignalsPage() {
             ? Number((entryPrice + takeProfitDistance).toFixed(5))
             : Number((entryPrice - takeProfitDistance).toFixed(5)),
         timeframe: selectedTimeframe,
-        confidence,
+        confidence: finalConfidence,
         timestamp: new Date(),
         currentPrice: adjustedEntryPrice,
         indicators,
         reasoning,
         status: "ACTIVE",
+        profitPct: undefined, // Not known until closed
+        explanation: mlExplanation,
+        mlUsed,
+        mlRaw,
       }
-      if (confidence < 30) {
+      console.log("Final signal object:", newSignal)
+      if (finalConfidence < 30) {
         setError("האות חלש מדי (מתחת ל-30% ביטחון). המתן דקה ונסה שוב.");
         return;
       }
@@ -1047,6 +1147,9 @@ export default function SignalsPage() {
         pnl,
         pnlPercent,
         checkedAt: new Date(),
+        profitPct: (signal.entryPrice && exitPrice)
+          ? calcProfitPct({ entry: signal.entryPrice, exit: exitPrice })
+          : undefined,
       };
       setSignals((prev: Signal[]) => prev.map((s: Signal) => s.id === signal.id ? updatedSignal : s));
       await saveSignalToSheets(updatedSignal, true);
@@ -1057,6 +1160,13 @@ export default function SignalsPage() {
       console.error("Error sealing trade:", err);
     }
   };
+
+  const filteredSignals = showFiltered
+    ? signals.filter(s =>
+        (typeof s.profitPct === "undefined" || s.profitPct >= MIN_PROFIT_PCT) &&
+        s.confidence >= MIN_CONFIDENCE
+      )
+    : signals;
 
   return (
     <div className="min-h-screen bg-gray-900 text-white">
@@ -1241,9 +1351,24 @@ export default function SignalsPage() {
               </div>
             </div>
 
-            {signals.length > 0 && (
+            <div className="flex justify-center my-4">
+              <button
+                className={`px-4 py-2 rounded ${showFiltered ? "bg-[#9c5925] text-white" : "bg-gray-700 text-gray-300"}`}
+                onClick={() => setShowFiltered(true)}
+              >
+                Filtered
+              </button>
+              <button
+                className={`px-4 py-2 rounded ml-2 ${!showFiltered ? "bg-[#9c5925] text-white" : "bg-gray-700 text-gray-300"}`}
+                onClick={() => setShowFiltered(false)}
+              >
+                All
+              </button>
+            </div>
+
+            {filteredSignals.length > 0 && (
               <SignalsTable
-                signals={signals}
+                signals={filteredSignals}
                 getStatusBadge={getStatusBadge}
                 onDeleteSignal={handleDeleteSignal}
                 onEditSignal={handleEditSignal}
@@ -1348,7 +1473,10 @@ export default function SignalsPage() {
               </Select>
 
               <Button
-                onClick={() => runBacktest(selectedPair, selectedTimeframe, generateAdvancedTradingSignal)}
+                onClick={() => {
+                  // Adapter: always return null (no signals) for now, or implement a simple signal generator
+                  runBacktest(selectedPair, selectedTimeframe, () => null);
+                }}
                 disabled={!selectedTimeframe || !selectedPair || isBacktesting}
                 className="w-full bg-purple-600 hover:bg-purple-700 text-white py-3 text-lg"
               >
@@ -1359,7 +1487,6 @@ export default function SignalsPage() {
             {backtestSummary && (
               <div className="w-full space-y-6">
                 <h2 className="text-2xl font-bold text-center mb-6">תוצאות בדיקה אחורה</h2>
-
                 <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
                   <Card className="bg-gray-800 border-gray-700">
                     <CardContent className="p-4 text-center">
@@ -1375,61 +1502,44 @@ export default function SignalsPage() {
                   </Card>
                   <Card className="bg-gray-800 border-gray-700">
                     <CardContent className="p-4 text-center">
-                      <div
-                        className={`text-2xl font-bold ${backtestSummary.totalPnL >= 0 ? "text-green-400" : "text-red-400"}`}
-                      >
-                        {backtestSummary.totalPnL >= 0 ? "+" : ""}
-                        {backtestSummary.totalPnL.toFixed(2)}%
-                      </div>
-                      <div className="text-sm text-gray-400">רווח/הפסד כולל</div>
+                      <div className={`text-2xl font-bold ${backtestSummary.avgProfitPct >= 0 ? "text-green-400" : "text-red-400"}`}>{backtestSummary.avgProfitPct.toFixed(2)}%</div>
+                      <div className="text-sm text-gray-400">רווח ממוצע</div>
                     </CardContent>
                   </Card>
                   <Card className="bg-gray-800 border-gray-700">
                     <CardContent className="p-4 text-center">
-                      <div className="text-2xl font-bold text-[#9c5925]">{backtestSummary.profitFactor.toFixed(2)}</div>
-                      <div className="text-sm text-gray-400">יחס רווח</div>
+                      <div className="text-2xl font-bold text-[#9c5925]">{backtestSummary.maxDrawdownPct.toFixed(2)}%</div>
+                      <div className="text-sm text-gray-400">מקסימום ירידה</div>
                     </CardContent>
                   </Card>
                 </div>
-
                 <Card className="bg-gray-800 border-gray-700">
                   <CardContent className="p-4">
-                    <div className="flex justify-between mb-2">
-                      <span>אחוז הצלחה</span>
-                      <span>{backtestSummary.winRate.toFixed(1)}%</span>
+                    <div className="flex flex-col items-center">
+                      <span className="mb-2">עקומת הון (Equity Curve)</span>
+                      <div className="w-full h-24 bg-gray-900 rounded overflow-hidden">
+                        {/* Simple equity curve visualization */}
+                        <svg width="100%" height="100%" viewBox="0 0 300 80" preserveAspectRatio="none">
+                          {backtestSummary.equityCurve.length > 1 && (
+                            <polyline
+                              fill="none"
+                              stroke="#9c5925"
+                              strokeWidth="2"
+                              points={backtestSummary.equityCurve.map((v, i, arr) => {
+                                const x = (i / (arr.length - 1)) * 300;
+                                // Normalize y to fit 0-80 (invert for SVG)
+                                const min = Math.min(...arr);
+                                const max = Math.max(...arr);
+                                const y = 80 - ((v - min) / (max - min || 1)) * 80;
+                                return `${x},${y}`;
+                              }).join(" ")}
+                            />
+                          )}
+                        </svg>
+                      </div>
                     </div>
-                    <Progress value={backtestSummary.winRate} className="h-2" />
                   </CardContent>
                 </Card>
-
-                <div className="space-y-2">
-                  <h3 className="text-lg font-bold">עסקאות אחרונות</h3>
-                  {backtestResults.slice(0, 10).map((result: BacktestResult, index: number) => (
-                    <Card key={index} className="bg-gray-800 border-gray-700">
-                      <CardContent className="p-3">
-                        <div className="flex justify-between items-center">
-                          <div className="flex items-center space-x-2">
-                            {result.outcome === "WIN" ? (
-                              <TrendingUp className="w-4 h-4 text-green-400" />
-                            ) : (
-                              <TrendingDown className="w-4 h-4 text-red-400" />
-                            )}
-                            <span className={result.direction === "BUY" ? "text-green-400" : "text-red-400"}>
-                              {result.direction} {result.pair}
-                            </span>
-                          </div>
-                          <div className="text-right">
-                            <div className={`font-bold ${result.pnlPercent >= 0 ? "text-green-400" : "text-red-400"}`}>
-                              {result.pnlPercent >= 0 ? "+" : ""}
-                              {result.pnlPercent.toFixed(2)}%
-                            </div>
-                            <div className="text-xs text-gray-400">{result.date}</div>
-                          </div>
-                        </div>
-                      </CardContent>
-                    </Card>
-                  ))}
-                </div>
               </div>
             )}
           </TabsContent>

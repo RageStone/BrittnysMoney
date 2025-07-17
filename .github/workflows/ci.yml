@@ -1,0 +1,25 @@
+name: CI
+
+on:
+  push:
+    branches: [ master ]
+  pull_request:
+    branches: [ master ]
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v3
+      - name: Set up Node.js
+        uses: actions/setup-node@v3
+        with:
+          node-version: 18
+      - name: Install dependencies
+        run: npm install
+      - name: Run Vitest with coverage
+        run: npx vitest run --coverage
+      - name: Enforce 90%+ coverage
+        run: |
+          npx vitest run --coverage --reporter=json
+          COVERAGE=$(node -e "const c=require('./coverage/coverage-summary.json');const f=['lib/metrics.ts','lib/risk.ts','lib/backtest.ts'];const t=f.map(x=>c.total.lines.pct>=90&&c.total.statements.pct>=90&&c.total.functions.pct>=90&&c.total.branches.pct>=90).every(Boolean);process.exit(t?0:1)") 

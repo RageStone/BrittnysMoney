@@ -1,17 +1,13 @@
 import { Card, CardHeader, CardTitle, CardContent } from "@/components/ui/card"
 import { TrendingUp, TrendingDown, Clock, Pencil, Trash2 } from "lucide-react"
-import { Signal } from "@/lib/utils"
+import { Signal, MLExplanation } from "@/lib/utils"
 import React, { useState, useEffect } from "react"
+import { simSLTP } from "@/lib/risk";
+import { useLivePnL } from "@/hooks/useLivePnL";
 
-interface SignalsTableProps {
-  signals: Signal[]
-  getStatusBadge: (status: Signal["status"], signal?: Signal) => React.ReactNode
-  onDeleteSignal?: (id: string) => void
-  onEditSignal?: (signal: Signal) => void
-  onSealSignal?: (signal: Signal) => void
-}
+type SignalWithExplanation = Signal & { explanation?: MLExplanation[], mlUsed?: boolean, mlRaw?: any }
 
-function toCSV(signals: Signal[]): string {
+function toCSV(signals: SignalWithExplanation[]): string {
   const header = [
     "id","pair","direction","entryPrice","stopLoss","takeProfit","timeframe","confidence","timestamp","currentPrice","reasoning","status","exitPrice","pnl","pnlPercent","checkedAt","rsi","stoch","williams","cci","atr","sma","ema","momentum"
   ]
@@ -96,6 +92,14 @@ function SignalCountdown({ timestamp, timeframe, onExpire }: { timestamp: string
   );
 }
 
+interface SignalsTableProps {
+  signals: SignalWithExplanation[]
+  getStatusBadge: (status: Signal["status"], signal?: Signal) => React.ReactNode
+  onDeleteSignal?: (id: string) => void
+  onEditSignal?: (signal: Signal) => void
+  onSealSignal?: (signal: Signal) => void
+}
+
 export function SignalsTable({ signals, getStatusBadge, onDeleteSignal, onEditSignal, onSealSignal }: SignalsTableProps) {
   const [direction, setDirection] = useState<string>("")
   const [status, setStatus] = useState<string>("")
@@ -104,6 +108,7 @@ export function SignalsTable({ signals, getStatusBadge, onDeleteSignal, onEditSi
   const [editSignal, setEditSignal] = useState<Signal | null>(null)
   const [editConfidence, setEditConfidence] = useState<number>(0)
   const [editReasoning, setEditReasoning] = useState<string>("")
+  const livePnL = useLivePnL();
 
   // Sort signals by timestamp descending (latest first)
   const sortedSignals = [...signals].sort((a, b) => new Date(b.timestamp).getTime() - new Date(a.timestamp).getTime())
@@ -213,8 +218,21 @@ export function SignalsTable({ signals, getStatusBadge, onDeleteSignal, onEditSi
                 <div className="flex items-center space-x-4">
                   <div className="text-right">
                     <div className="text-sm text-gray-400">ביטחון</div>
-                    <div className="font-bold text-[#9c5925]">{signal.confidence}%</div>
+                    <div className="font-bold text-[#9c5925] flex items-center gap-2">
+                      {signal.confidence}%
+                      {signal.mlUsed !== undefined && (
+                        <span className={`ml-1 px-2 py-0.5 rounded text-xs ${signal.mlUsed ? 'bg-green-800 text-green-300' : 'bg-gray-700 text-gray-300'}`}
+                          title={signal.mlUsed ? 'ML-powered confidence' : 'Fallback confidence'}>
+                          {signal.mlUsed ? 'ML' : 'Fallback'}
+                        </span>
+                      )}
+                    </div>
                   </div>
+                  {livePnL[signal.id] !== undefined && (
+                    <div className={`px-2 py-1 rounded font-mono text-xs ${livePnL[signal.id] >= 0 ? "bg-green-900 text-green-400" : "bg-red-900 text-red-400"}`} title="Live PnL">
+                      {livePnL[signal.id] >= 0 ? "+" : ""}{livePnL[signal.id].toFixed(2)}%
+                    </div>
+                  )}
                   <div className="flex items-center space-x-2 text-sm text-gray-400">
                     <Clock className="w-4 h-4" />
                     <span>{signal.timeframe}</span>
@@ -252,7 +270,7 @@ export function SignalsTable({ signals, getStatusBadge, onDeleteSignal, onEditSi
               </div>
             </CardHeader>
             <CardContent className="pt-0">
-              <div className="grid grid-cols-2 md:grid-cols-4 gap-4 text-sm mb-4">
+              <div className="grid grid-cols-2 md:grid-cols-5 gap-4 text-sm mb-4">
                 <div>
                   <span className="text-gray-400">מחיר כניסה:</span>
                   <div className="font-mono text-white">{signal.entryPrice.toFixed(5)}</div>
@@ -266,23 +284,19 @@ export function SignalsTable({ signals, getStatusBadge, onDeleteSignal, onEditSi
                   <div className="font-mono text-green-400">{signal.takeProfit.toFixed(5)}</div>
                 </div>
                 <div>
-                  <span className="text-gray-400">
-                    {signal.status === "WIN" || signal.status === "LOSS" ? "רווח/הפסד:" : "ATR:"}
-                  </span>
-                  <div
-                    className={`font-mono ${
-                      signal.status === "WIN" || signal.status === "LOSS"
-                        ? signal.pnlPercent! >= 0
-                          ? "text-green-400"
-                          : "text-red-400"
-                        : "text-yellow-400"
-                    }`}
-                  >
-                    {signal.status === "WIN" || signal.status === "LOSS"
-                      ? signal.pnlPercent !== undefined
-                        ? `${signal.pnlPercent >= 0 ? "+" : ""}${signal.pnlPercent.toFixed(2)}%`
-                        : "N/A"
-                      : signal.indicators.atr.toFixed(5)}
+                  <span className="text-gray-400">Profit %:</span>
+                  <div className={`font-mono ${signal.profitPct !== undefined ? (signal.profitPct >= 0 ? "text-green-400" : "text-red-400") : "text-gray-400"}`}>
+                    {signal.profitPct !== undefined ? `${signal.profitPct >= 0 ? "+" : ""}${signal.profitPct.toFixed(2)}%` : "N/A"}
+                  </div>
+                </div>
+                <div>
+                  <span className="text-gray-400">Risk/Reward:</span>
+                  <div className="font-mono text-yellow-400">
+                    {(() => {
+                      const slPct = signal.entryPrice !== 0 ? Math.abs((signal.entryPrice - signal.stopLoss) / signal.entryPrice) * 100 : 0;
+                      const tpPct = signal.entryPrice !== 0 ? Math.abs((signal.takeProfit - signal.entryPrice) / signal.entryPrice) * 100 : 0;
+                      return slPct && tpPct ? `${(tpPct / slPct).toFixed(2)} : 1` : "N/A";
+                    })()}
                   </div>
                 </div>
               </div>
@@ -366,6 +380,23 @@ export function SignalsTable({ signals, getStatusBadge, onDeleteSignal, onEditSi
               <div dir="rtl" className="my-2 px-3 py-2 rounded bg-green-900/20 border border-green-500 text-green-300 text-sm font-medium text-right">
                 {signal.reasoning}
               </div>
+              {signal.explanation && signal.explanation.length > 0 && (
+                <div className="mt-2 text-xs text-gray-400">
+                  <strong>Top ML Factors:</strong>
+                  <ul>
+                    {signal.explanation.map((e: MLExplanation, i: number) => (
+                      <li key={i}>{e.feature}: {e.impact > 0 ? '+' : ''}{e.impact.toFixed(2)}</li>
+                    ))}
+                  </ul>
+                </div>
+              )}
+              {/* Debug: Show raw ML API response if present */}
+              {signal.mlRaw && (
+                <details className="mt-2 text-xs text-yellow-400">
+                  <summary>ML API Debug</summary>
+                  <pre>{JSON.stringify(signal.mlRaw, null, 2)}</pre>
+                </details>
+              )}
             </CardContent>
           </Card>
         ))}

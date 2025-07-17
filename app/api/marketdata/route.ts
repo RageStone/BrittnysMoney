@@ -1,11 +1,11 @@
 import { NextRequest, NextResponse } from "next/server"
 
 const API_KEYS = [
-  process.env.TWELVEDATA_KEY1!,
+  /*process.env.TWELVEDATA_KEY1!,
   process.env.TWELVEDATA_KEY2!,
   process.env.TWELVEDATA_KEY3!,
-  process.env.TWELVEDATA_KEY4!,
- // "83e912998f8e471e89b62ff65512a154",
+  process.env.TWELVEDATA_KEY4!,*/
+ "83e912998f8e471e89b62ff65512a154",
   
 ]
 

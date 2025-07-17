@@ -103,6 +103,7 @@ export async function POST(request: NextRequest) {
         signal.exitPrice || "",
         signal.pnl || "",
         signal.pnlPercent || "",
+        signal.profitPct || "",
         signal.checkedAt || "",
         signal.indicators.rsi,
         signal.indicators.stoch,
@@ -170,6 +171,7 @@ export async function POST(request: NextRequest) {
         signal.exitPrice || "",
         signal.pnl || "",
         signal.pnlPercent || "",
+        signal.profitPct || "",
         signal.checkedAt || "",
         signal.indicators.rsi,
         signal.indicators.stoch,
@@ -224,6 +226,31 @@ export async function POST(request: NextRequest) {
         range: clearRange,
       })
       return NextResponse.json({ success: true })
+    }
+
+    if (action === "log_backtest") {
+      // Log a backtest summary to the 'backtest' sheet
+      const { pair, timeframe, timestamp, totalTrades, winRate, avgProfitPct, maxDrawdownPct, equityCurve, params } = body;
+      const values = [[
+        pair,
+        timeframe,
+        timestamp || new Date().toISOString(),
+        totalTrades,
+        winRate,
+        avgProfitPct,
+        maxDrawdownPct,
+        JSON.stringify(equityCurve),
+        params ? JSON.stringify(params) : ""
+      ]];
+      const sheetName = "backtest";
+      const range = `${sheetName}!A:I`;
+      await sheetsClient.spreadsheets.values.append({
+        spreadsheetId: SHEET_ID,
+        range,
+        valueInputOption: "RAW",
+        requestBody: { values },
+      });
+      return NextResponse.json({ success: true });
     }
 
     return NextResponse.json({ error: "Invalid action" }, { status: 400 })

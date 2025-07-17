@@ -36,7 +36,7 @@ export interface Signal {
   stopLoss: number
   takeProfit: number
   timeframe: string
-  confidence: number
+  confidence: number // 0-100, probability/confidence in the signal
   timestamp: Date
   currentPrice: number
   indicators: TechnicalIndicators
@@ -45,6 +45,7 @@ export interface Signal {
   exitPrice?: number
   pnl?: number
   pnlPercent?: number
+  profitPct?: number // Actual profit percentage for this signal
   checkedAt?: Date
 }
 
@@ -81,6 +82,7 @@ export function parseSignal(raw: any): Signal | null {
       exitPrice: raw.exitPrice !== undefined ? Number.parseFloat(raw.exitPrice) : (raw[12] ? Number.parseFloat(raw[12]) : undefined),
       pnl: raw.pnl !== undefined ? Number.parseFloat(raw.pnl) : (raw[13] ? Number.parseFloat(raw[13]) : undefined),
       pnlPercent: raw.pnlPercent !== undefined ? Number.parseFloat(raw.pnlPercent) : (raw[14] ? Number.parseFloat(raw[14]) : undefined),
+      profitPct: raw.profitPct !== undefined ? Number.parseFloat(raw.profitPct) : (raw[34] ? Number.parseFloat(raw[34]) : undefined),
       checkedAt: raw.checkedAt ? new Date(raw.checkedAt) : (raw[15] ? new Date(raw[15]) : undefined),
       indicators: {
         rsi: Number.parseFloat(raw.indicators?.rsi ?? raw[16]) || 50,
@@ -176,6 +178,7 @@ export const SignalSchema = z.object({
   exitPrice: z.number().optional(),
   pnl: z.number().optional(),
   pnlPercent: z.number().optional(),
+  profitPct: z.number().optional(),
   checkedAt: z.union([z.string(), z.date()]).optional(),
 })
 
@@ -201,3 +204,95 @@ export const BacktestSummarySchema = z.object({
   avgLoss: z.number(),
   profitFactor: z.number(),
 })
+
+// --- ML Confidence API Integration ---
+export interface SignalFeatures {
+  rsi: number;
+  stoch: number;
+  williams: number;
+  cci: number;
+  atr: number;
+  sma: number;
+  ema: number;
+  momentum: number;
+  macd: number;
+  macdSignal: number;
+  macdHist: number;
+  bbUpper: number;
+  bbLower: number;
+  bbMiddle: number;
+  adx: number;
+  obv: number;
+  mfi: number;
+  stochrsi: number;
+  pair: number;       // Must match model encoding!
+  timeframe: number;  // Must match model encoding!
+  direction: number;  // Must match model encoding!
+}
+
+export interface MLExplanation {
+  feature: string;
+  impact: number;
+}
+export interface MLConfidenceResponse {
+  confidence: number;
+  explanation?: MLExplanation[];
+}
+
+/**
+ * Calls the ML confidence FastAPI server and returns the confidence score and explanation.
+ * @param features Signal features, with categorical fields encoded as in training.
+ * @returns confidence (0-1) and explanation
+ */
+export async function fetchMLConfidence(features: SignalFeatures): Promise<MLConfidenceResponse> {
+  const apiUrl = process.env.NEXT_PUBLIC_ML_API_URL || 'http://127.0.0.1:8000/predict';
+  // Only send the expected numeric fields
+  const payload: SignalFeatures = {
+    rsi: features.rsi,
+    stoch: features.stoch,
+    williams: features.williams,
+    cci: features.cci,
+    atr: features.atr,
+    sma: features.sma,
+    ema: features.ema,
+    momentum: features.momentum,
+    macd: features.macd,
+    macdSignal: features.macdSignal,
+    macdHist: features.macdHist,
+    bbUpper: features.bbUpper,
+    bbLower: features.bbLower,
+    bbMiddle: features.bbMiddle,
+    adx: features.adx,
+    obv: features.obv,
+    mfi: features.mfi,
+    stochrsi: features.stochrsi,
+    pair: features.pair,
+    timeframe: features.timeframe,
+    direction: features.direction,
+  };
+  const res = await fetch(apiUrl, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(payload),
+  });
+  if (!res.ok) {
+    let msg = 'ML API error';
+    try {
+      const err = await res.json();
+      msg += `: ${JSON.stringify(err)}`;
+    } catch {}
+    throw new Error(msg);
+  }
+  const data = await res.json();
+  if (typeof data.confidence !== 'number') {
+    throw new Error('ML API response missing confidence');
+  }
+  // explanation is optional but should be an array if present
+  if (data.explanation && !Array.isArray(data.explanation)) {
+    throw new Error('ML API response explanation is not an array');
+  }
+  return {
+    confidence: data.confidence,
+    explanation: data.explanation,
+  };
+}
